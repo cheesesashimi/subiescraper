@@ -5,9 +5,18 @@ type DealerStream struct {
 	Err error
 }
 
-type Dealers []Dealer
+type DealerResponseStream struct {
+	DealerResponse
+	Err error
+}
 
 type Dealer struct {
+	Dealer DealerResponse    `json:"dealer"`
+	New    InventoryResponse `json:"new"`
+	Used   InventoryResponse `json:"used"`
+}
+
+type DealerResponse struct {
 	ID                 string   `json:"id"`
 	Name               string   `json:"name"`
 	Address            Address  `json:"address"`
