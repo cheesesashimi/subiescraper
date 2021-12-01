@@ -10,7 +10,8 @@ type DealerStream struct {
 
 type DealerResponseStream struct {
 	DealerResponse
-	Err error
+	DNSNames []string
+	Err      error
 }
 
 type Dealer struct {
@@ -20,33 +21,33 @@ type Dealer struct {
 }
 
 type DealerResponse struct {
-	ID                 string   `json:"id"`
-	Name               string   `json:"name"`
-	Address            Address  `json:"address"`
-	PhoneNumber        string   `json:"phoneNumber"`
-	ServicePhoneNumber string   `json:"servicePhoneNumber"`
-	FaxNumber          string   `json:"faxNumber"`
-	SiteURL            string   `json:"siteUrl"`
-	Types              []string `json:"types"`
-	Location           Location `json:"location"`
+	ID                 string   `json:"id,omitempty"`
+	Name               string   `json:"name,omitempty"`
+	Address            Address  `json:"address,omitempty"`
+	PhoneNumber        string   `json:"phoneNumber,omitempty"`
+	ServicePhoneNumber string   `json:"servicePhoneNumber,omitempty"`
+	FaxNumber          string   `json:"faxNumber,omitempty"`
+	SiteURL            string   `json:"siteUrl,omitempty"`
+	Types              []string `json:"types,omitempty"`
+	Location           Location `json:"location,omitempty"`
 }
 
 type Address struct {
-	Type    string `json:"type"`
-	Street  string `json:"street"`
-	Street2 string `json:"street2"`
-	City    string `json:"city"`
-	County  string `json:"county"`
-	State   string `json:"state"`
-	Zipcode string `json:"zipcode"`
+	Type    string `json:"type,omitempty"`
+	Street  string `json:"street,omitempty"`
+	Street2 string `json:"street2,omitempty"`
+	City    string `json:"city,omitempty"`
+	County  string `json:"county,omitempty"`
+	State   string `json:"state,omitempty"`
+	Zipcode string `json:"zipcode,omitempty"`
 }
 
 type Location struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Region    string  `json:"region"`
-	Zone      string  `json:"zone"`
-	District  string  `json:"district"`
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
+	Region    string  `json:"region,omitempty"`
+	Zone      string  `json:"zone,omitempty"`
+	District  string  `json:"district,omitempty"`
 }
 
 type InventoryResponse struct {

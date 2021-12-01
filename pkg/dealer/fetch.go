@@ -3,10 +3,16 @@ package dealer
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
+
+	"github.com/PuerkitoBio/goquery"
+	"github.com/cheesesashimi/subiescraper/pkg/utils"
 )
 
 const (
@@ -14,6 +20,85 @@ const (
 	newCarPath         string = "/apis/widget/INVENTORY_LISTING_DEFAULT_AUTO_NEW:inventory-data-bus1/getInventory"
 	usedCarPath        string = "/apis/widget/INVENTORY_LISTING_DEFAULT_AUTO_USED:inventory-data-bus1/getInventory"
 )
+
+func FromDisk(filename string) (map[string][]Dealer, error) {
+	out := map[string][]Dealer{}
+	b, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return out, err
+	}
+
+	err = json.Unmarshal(b, &out)
+
+	return out, err
+}
+
+func GetDealerResponseFromReader(r io.Reader, hostname string) (DealerResponse, error) {
+	doc, err := goquery.NewDocumentFromReader(r)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	name := ""
+	address := ""
+	extendedAddress := ""
+	locality := ""
+	state := ""
+	zip := ""
+
+	doc.Find(".vcard").Each(func(i int, s *goquery.Selection) {
+		if name == "" {
+			name = strings.TrimSpace(s.Find(".org").Text())
+		}
+
+		if address == "" {
+			address = strings.TrimSpace(s.Find(".street-address").Text())
+		}
+
+		if extendedAddress == "" {
+			extendedAddress = strings.TrimSpace(s.Find(".extended-address").Text())
+		}
+
+		if locality == "" {
+			locality = strings.TrimSpace(s.Find(".locality").Text())
+		}
+
+		if state == "" {
+			state = strings.TrimSpace(s.Find(".region").Text())
+		}
+
+		if zip == "" {
+			zip = strings.TrimSpace(s.Find(".postal-code").Text())
+		}
+	})
+
+	return DealerResponse{
+		Name:    name,
+		SiteURL: utils.HostnameToURL(hostname),
+		Address: Address{
+			Street:  address,
+			Street2: extendedAddress,
+			City:    locality,
+			State:   state,
+			Zipcode: zip,
+		},
+	}, nil
+}
+
+func GetDealerResponseFromLandingPage(link string) (DealerResponse, error) {
+	out := DealerResponse{}
+
+	client := &http.Client{}
+
+	resp, err := client.Get(link)
+	if err != nil {
+		return out, err
+	}
+
+	defer resp.Body.Close()
+
+	return GetDealerResponseFromReader(resp.Body, resp.Request.URL.Host)
+}
 
 func GetDealerAndInventory(d DealerResponse) (Dealer, error) {
 	out := Dealer{}
@@ -152,15 +237,6 @@ func GetDealersByState(state string) ([]DealerResponse, error) {
 		return out, fmt.Errorf("could not parse dealer response: %w", err)
 	}
 
-	for i, d := range out {
-		siteURL, err := getDealerHostnameRedirect(d)
-		if err != nil {
-			continue
-		}
-
-		out[i].SiteURL = siteURL
-	}
-
 	return out, nil
 }
 
@@ -178,13 +254,14 @@ func GetDealersByStateWithRedirects(state string) chan DealerResponseStream {
 		}
 
 		for _, dealerResp := range dealerResps {
-			siteURL, err := getDealerHostnameRedirect(dealerResp)
+			siteURL, dnsNames, err := getDealerHostnameRedirect(dealerResp)
 			if err == nil {
 				dealerResp.SiteURL = siteURL
 			}
 
 			dealerRespChan <- DealerResponseStream{
 				DealerResponse: dealerResp,
+				DNSNames:       dnsNames,
 				Err:            err,
 			}
 		}
@@ -205,22 +282,29 @@ func getDirectLink(respURL *url.URL, link string) string {
 	return u.String()
 }
 
-func getDealerHostnameRedirect(d DealerResponse) (string, error) {
-	siteURL := ""
+func GetDealerHostnameRedirect(d DealerResponse) (string, []string, error) {
+	return getDealerHostnameRedirect(d)
+}
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			siteURL = req.URL.String()
-			return http.ErrUseLastResponse
-		},
-	}
+func getDealerHostnameRedirect(d DealerResponse) (string, []string, error) {
+	client := &http.Client{}
 
 	resp, err := client.Get(d.SiteURL)
 	if err != nil {
-		return "", fmt.Errorf("could not get dealer hostname redirect: %w", err)
+		return "", []string{}, err
 	}
 
 	defer resp.Body.Close()
 
-	return siteURL, nil
+	dnsNames := []string{}
+
+	if resp.TLS != nil {
+		for _, cert := range resp.TLS.PeerCertificates {
+			if cert != nil {
+				dnsNames = append(dnsNames, cert.DNSNames...)
+			}
+		}
+	}
+
+	return resp.Request.URL.String(), dnsNames, err
 }
