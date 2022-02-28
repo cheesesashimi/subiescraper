@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/gammazero/workerpool"
 
 	"github.com/cheesesashimi/subiescraper/pkg/dealer"
+	"github.com/cheesesashimi/subiescraper/pkg/html"
 	"github.com/cheesesashimi/subiescraper/pkg/utils"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -25,18 +27,54 @@ const (
 	classifiedDealersFile string = "classified-dealers.json"
 )
 
-func getInterestedMakes() []string {
-	return []string{
-		"acura",
-		"honda",
-		"hyundai",
-		"lexus",
-		"nissan",
-		"subaru",
-		"toyota",
-		"volkswagen",
-		"vw",
+func getInterestedMakesAndModels() map[string]url.Values {
+	return map[string]url.Values{
+		"acura": url.Values{
+			"make":  []string{"Acura"},
+			"model": []string{"TLX", "Integra"},
+		},
+		"honda": url.Values{
+			"make":               []string{"Honda"},
+			"model":              []string{"Civic", "Civic Si", "Civic Type-R"},
+			"normalTransmission": []string{"Manual"},
+		},
+		"hyundai": url.Values{
+			"make":               []string{"Hyundai"},
+			"model":              []string{"Veloster", "Elantra"},
+			"normalTransmission": []string{"Manual"},
+		},
+		"lexus": url.Values{
+			"make":  []string{"Lexus"},
+			"model": []string{"IS500"},
+		},
+		"nissan": url.Values{
+			"make":  []string{"Nissan"},
+			"model": []string{"Z"},
+		},
+		"subaru": url.Values{
+			"make":               []string{"Subaru"},
+			"model":              []string{"WRX", "BRZ"},
+			"normalTransmission": []string{"Manual"},
+		},
+		"toyota": url.Values{
+			"make":  []string{"Toyota"},
+			"model": []string{"86", "Supra"},
+		},
+		"volkswagen": url.Values{
+			"make":               []string{"Volkswagen"},
+			"model":              []string{"Jetta", "Jetta GLI", "GTI", "Golf", "Golf-R"},
+			"normalTransmission": []string{"Manual"},
+		},
+		"vw": url.Values{
+			"make":               []string{"Volkswagen"},
+			"model":              []string{"Jetta", "Jetta GLI", "GTI", "Golf", "Golf-R"},
+			"normalTransmission": []string{"Manual"},
+		},
 	}
+}
+
+func getInterestedMakes() []string {
+	return sets.StringKeySet(getInterestedMakesAndModels()).List()
 }
 
 func classifyDealers(dealers []dealer.DealerResponse) map[string][]dealer.DealerResponse {
@@ -107,6 +145,15 @@ func readClassifiedDealersFileAndFlatten() ([]dealer.DealerResponse, error) {
 	}
 
 	return sortDealers(out), nil
+}
+
+func writeClassifiedDealersFilePreclassed(classified map[string][]dealer.DealerResponse) error {
+	b, err := json.Marshal(classified)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(classifiedDealersFile, b, 0755)
 }
 
 func writeClassifiedDealersFile(dealers []dealer.DealerResponse) error {
@@ -339,7 +386,71 @@ func writeHostsFile(dh []DealerHost) error {
 	return ioutil.WriteFile("hosts.json", b, 0755)
 }
 
+func dedupeClassifiedDealers() {
+	dealerRespsClassified, err := readClassifiedDealersFile()
+	if err != nil {
+		panic(err)
+	}
+
+	for key, dealerResps := range dealerRespsClassified {
+		dealerSet := sets.NewString()
+
+		deduped := []dealer.DealerResponse{}
+
+		before := len(dealerResps)
+
+		for _, dealerResp := range dealerResps {
+			dealerString := dealerResp.String()
+			if !dealerSet.Has(dealerString) {
+				dealerSet.Insert(dealerString)
+				deduped = append(deduped, dealerResp)
+			}
+		}
+
+		after := len(deduped)
+
+		fmt.Println("Deduped", key, "Before:", before, "After:", after)
+
+		dealerRespsClassified[key] = deduped
+	}
+
+	writeClassifiedDealersFilePreclassed(dealerRespsClassified)
+}
+
 func main() {
+	findAllDealers()
+}
+
+func getAllInventory() {
+	dealerRespsClassified, err := readClassifiedDealersFile()
+	if err != nil {
+		panic(err)
+	}
+
+	mnm := getInterestedMakesAndModels()
+
+	for key, dealerResps := range dealerRespsClassified {
+		dealers := []dealer.Dealer{}
+		fmt.Println("Querying for", key, "inventory:")
+		for _, dealerResp := range dealerResps {
+			fmt.Println("Querying", dealerResp.Name, dealerResp.SiteURL)
+			out, err := dealer.GetDealerAndInventory(dealerResp, mnm[key])
+			if err != nil {
+				fmt.Println("Could not get inventory for:", mnm[key], dealerResp.SiteURL, err)
+				continue
+			}
+			dealers = append(dealers, out)
+		}
+
+		filename := fmt.Sprintf("%s-cars.html", key)
+		fmt.Println("Writing to:", filename)
+		if err := html.DealersPageToFile(dealers, filename); err != nil {
+			fmt.Println("could not write to", filename, "Error:", err)
+		}
+	}
+}
+
+func findAllDealers() {
 	hostSetChan := make(chan sets.String)
 	dealerHostChan := make(chan DealerHost)
 	dealerRespChan := make(chan dealer.DealerResponse)
@@ -347,7 +458,7 @@ func main() {
 	hosts := loadHostsFile()
 	printDealerHostStats(hosts)
 
-	wp := workerpool.New(3)
+	wp := workerpool.New(5)
 	extractWP := workerpool.New(10)
 
 	outer := func(h DealerHost) func() {
@@ -431,7 +542,21 @@ func main() {
 
 					return
 				}
+
 				dealerResps = append(dealerResps, dealerResp)
+				/*
+					wp.Submit(func() {
+						mnm := getInterestedMakesAndModels()
+						for key := range mnm {
+							if strings.Contains(dealerResp.SiteURL, key) {
+								_, err := dealer.GetDealerAndInventory(dealerResp, mnm[key])
+								if err != nil {
+									fmt.Println("Could not get inventory for:", mnm[key], dealerResp.SiteURL, err)
+								}
+							}
+						}
+					})
+				*/
 			}
 		}
 	}()
