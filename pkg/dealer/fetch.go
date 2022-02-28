@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -39,50 +40,57 @@ func GetDealerResponseFromReader(r io.Reader, hostname string) (DealerResponse, 
 		log.Fatal(err)
 	}
 
-	name := ""
-	address := ""
-	extendedAddress := ""
-	locality := ""
-	state := ""
-	zip := ""
+	fields := []string{
+		"address1",
+		"address2",
+		"city",
+		"country",
+		"postalCode",
+		"stateProvince",
+		"dealershipName",
+	}
 
-	doc.Find(".vcard").Each(func(i int, s *goquery.Selection) {
-		if name == "" {
-			name = strings.TrimSpace(s.Find(".org").Text())
-		}
+	extracted := map[string]string{}
 
-		if address == "" {
-			address = strings.TrimSpace(s.Find(".street-address").Text())
-		}
+	foundText := ""
 
-		if extendedAddress == "" {
-			extendedAddress = strings.TrimSpace(s.Find(".extended-address").Text())
-		}
-
-		if locality == "" {
-			locality = strings.TrimSpace(s.Find(".locality").Text())
-		}
-
-		if state == "" {
-			state = strings.TrimSpace(s.Find(".region").Text())
-		}
-
-		if zip == "" {
-			zip = strings.TrimSpace(s.Find(".postal-code").Text())
-		}
+	doc.Find("script").EachWithBreak(func(i int, s *goquery.Selection) bool {
+		foundText = s.Text()
+		foundIt := strings.Contains(foundText, "DDC.dataLayer['dealership'] = {")
+		return !foundIt
 	})
 
-	return DealerResponse{
-		Name:    name,
+	lines := strings.Split(foundText, "\n")
+	for _, line := range lines {
+		for _, field := range fields {
+			prefix := fmt.Sprintf("\"%s\": ", field)
+			if strings.HasPrefix(line, prefix) {
+				line = strings.ReplaceAll(line, prefix, "")
+				line = strings.TrimRight(line, ",")
+				unquoted, err := strconv.Unquote(line)
+				if err != nil {
+					panic(err)
+				}
+				extracted[field] = unquoted
+			}
+		}
+	}
+
+	dr := DealerResponse{
+		Name:    extracted["dealershipName"],
 		SiteURL: utils.HostnameToURL(hostname),
 		Address: Address{
-			Street:  address,
-			Street2: extendedAddress,
-			City:    locality,
-			State:   state,
-			Zipcode: zip,
+			Street:  extracted["address1"],
+			Street2: extracted["address2"],
+			City:    extracted["city"],
+			State:   extracted["stateProvince"],
+			Zipcode: extracted["postalCode"],
 		},
-	}, nil
+	}
+
+	fmt.Println(dr)
+
+	return dr, nil
 }
 
 func GetDealerResponseFromLandingPage(link string) (DealerResponse, error) {
@@ -100,7 +108,16 @@ func GetDealerResponseFromLandingPage(link string) (DealerResponse, error) {
 	return GetDealerResponseFromReader(resp.Body, resp.Request.URL.Host)
 }
 
-func GetDealerAndInventory(d DealerResponse) (Dealer, error) {
+func GetDealerAndInventoryFromLink(link string, inventoryQuery url.Values) (Dealer, error) {
+	dr, err := GetDealerResponseFromLandingPage(link)
+	if err != nil {
+		return Dealer{}, err
+	}
+
+	return GetDealerAndInventory(dr, inventoryQuery)
+}
+
+func GetDealerAndInventory(d DealerResponse, inventoryQuery url.Values) (Dealer, error) {
 	out := Dealer{}
 	out.Dealer = d
 
@@ -115,22 +132,22 @@ func GetDealerAndInventory(d DealerResponse) (Dealer, error) {
 
 	go func() {
 		defer wg.Done()
-		newInventory, newErr = getInventoryFromPath(d, newCarPath)
+		newInventory, newErr = getInventoryFromPath(d, newCarPath, inventoryQuery)
 	}()
 
 	go func() {
 		defer wg.Done()
-		usedInventory, usedErr = getInventoryFromPath(d, usedCarPath)
+		usedInventory, usedErr = getInventoryFromPath(d, usedCarPath, inventoryQuery)
 	}()
 
 	wg.Wait()
 
 	if newErr != nil {
-		return out, fmt.Errorf("could not get new inventory from %s: %w", d.Name, newErr)
+		return out, fmt.Errorf("could not get new inventory from %s: %w", d.SiteURL, newErr)
 	}
 
 	if usedErr != nil {
-		return out, fmt.Errorf("could not get used inventory from %s: %w", d.Name, usedErr)
+		return out, fmt.Errorf("could not get used inventory from %s: %w", d.SiteURL, usedErr)
 	}
 
 	out.New = newInventory
@@ -139,7 +156,7 @@ func GetDealerAndInventory(d DealerResponse) (Dealer, error) {
 	return out, nil
 }
 
-func getInventoryFromPath(d DealerResponse, inventoryPath string) (InventoryResponse, error) {
+func getInventoryFromPath(d DealerResponse, inventoryPath string, inventoryQuery url.Values) (InventoryResponse, error) {
 	out := InventoryResponse{}
 
 	u, err := url.Parse(d.SiteURL)
@@ -148,20 +165,18 @@ func getInventoryFromPath(d DealerResponse, inventoryPath string) (InventoryResp
 	}
 
 	u.Path = inventoryPath
-	q := url.Values{
-		"make": []string{
-			"Subaru",
-			"Toyota",
-		},
-		"model": []string{
-			"86",
-			"BRZ",
-			"WRX",
-		},
-	}
-	u.RawQuery = q.Encode()
+	u.RawQuery = inventoryQuery.Encode()
 
-	resp, err := http.Get(u.String())
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return out, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.55 Safari/537.36")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return out, err
 	}
@@ -196,7 +211,10 @@ func ByState(state string) chan DealerStream {
 				continue
 			}
 
-			d, err := GetDealerAndInventory(dealerResp.DealerResponse)
+			d, err := GetDealerAndInventory(dealerResp.DealerResponse, url.Values{
+				"make":  []string{"Subaru"},
+				"model": []string{"WRX", "BRZ"},
+			})
 			dealerStream <- DealerStream{
 				Dealer: d,
 				Err:    err,

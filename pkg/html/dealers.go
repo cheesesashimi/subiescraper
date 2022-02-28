@@ -2,12 +2,24 @@ package html
 
 import (
 	"fmt"
+	"io/ioutil"
 	"sort"
+	"strings"
 
 	"github.com/cheesesashimi/subiescraper/pkg/dealer"
 	"github.com/julvo/htmlgo"
 	a "github.com/julvo/htmlgo/attributes"
 )
+
+func DealersPageToFile(dealers []dealer.Dealer, filename string) error {
+	out := DealersPage(dealers)
+
+	if !strings.HasSuffix(filename, ".html") {
+		filename = filename + ".html"
+	}
+
+	return ioutil.WriteFile(filename, []byte(out), 0755)
+}
 
 func DealersPage(dealers []dealer.Dealer) htmlgo.HTML {
 	out := []htmlgo.HTML{}
