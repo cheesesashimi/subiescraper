@@ -8,6 +8,7 @@ require (
 	github.com/gammazero/deque v0.1.0 // indirect
 	github.com/gammazero/workerpool v1.1.2 // indirect
 	github.com/julvo/htmlgo v0.0.0-20200505154053-2e9f4b95a223 // indirect
+	github.com/urfave/cli/v2 v2.3.0 // indirect
 	golang.org/x/net v0.0.0-20210916014120-12bc252f5db8 // indirect
 	k8s.io/apimachinery v0.22.4 // indirect
 )
