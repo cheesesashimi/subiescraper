@@ -14,3 +14,10 @@ The part you're probably interested in is located in the `cmd/subiescraper` fold
 4. `$ ./subiescraper --help`
 
 A future TODO is to have CI running on this repo publishing ready-to-use binaries.
+
+## Limitations
+
+A lot. In no particular order:
+- Only works on Subaru dealers at the moment.
+- Hard-coded to search for Subaru WRXes and BRZs.
+- Fetches dealer inventory sequentially, though this is on purpose.
