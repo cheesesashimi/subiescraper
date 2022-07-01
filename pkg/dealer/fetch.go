@@ -213,7 +213,7 @@ func ByState(state string) chan DealerStream {
 
 			d, err := GetDealerAndInventory(dealerResp.DealerResponse, url.Values{
 				"make":  []string{"Subaru"},
-				"model": []string{"WRX", "BRZ"},
+				"model": []string{"WRX", "BRZ", "Outback"},
 			})
 			dealerStream <- DealerStream{
 				Dealer: d,
