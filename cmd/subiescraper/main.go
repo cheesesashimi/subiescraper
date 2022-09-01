@@ -93,11 +93,23 @@ func queryDealers(states []string, toJSON, toHTML bool) error {
 		fmt.Println("Will write results to HTML files")
 	}
 
+	type dealerErr struct {
+		dealer dealer.Dealer
+		err    error
+	}
+
+	dealerErrs := []dealerErr{}
+
 	for _, state := range states {
 		fmt.Println("Getting dealers in", state)
 		dealers := []dealer.Dealer{}
 		for d := range dealer.ByState(state) {
 			if d.Err != nil {
+				fmt.Println("ERROR:", d.Err, "Skipping...")
+				dealerErrs = append(dealerErrs, dealerErr{
+					dealer: d.Dealer,
+					err:    d.Err,
+				})
 				continue
 			}
 			printDealerDetail(d.Dealer)
@@ -114,6 +126,13 @@ func queryDealers(states []string, toJSON, toHTML bool) error {
 			if err := jsonToDisk(dealers, state); err != nil {
 				return fmt.Errorf("could not write dealer JSON to disk: %w", err)
 			}
+		}
+	}
+
+	if len(dealerErrs) != 0 {
+		fmt.Println("The following dealers were skipped due to errors:")
+		for _, dErr := range dealerErrs {
+			fmt.Printf("- %s - ERROR: %s\n", dErr.dealer.Dealer.Name, dErr.err)
 		}
 	}
 

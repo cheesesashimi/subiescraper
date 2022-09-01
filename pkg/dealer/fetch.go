@@ -14,6 +14,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/cheesesashimi/subiescraper/pkg/utils"
+	aggError "k8s.io/apimachinery/pkg/util/errors"
 )
 
 const (
@@ -142,18 +143,20 @@ func GetDealerAndInventory(d DealerResponse, inventoryQuery url.Values) (Dealer,
 
 	wg.Wait()
 
+	errs := []error{}
+
 	if newErr != nil {
-		return out, fmt.Errorf("could not get new inventory from %s: %w", d.SiteURL, newErr)
+		errs = append(errs, fmt.Errorf("could not get new inventory: %w", newErr))
 	}
 
 	if usedErr != nil {
-		return out, fmt.Errorf("could not get used inventory from %s: %w", d.SiteURL, usedErr)
+		errs = append(errs, fmt.Errorf("could not get used inventory: %w", usedErr))
 	}
 
 	out.New = newInventory
 	out.Used = usedInventory
 
-	return out, nil
+	return out, aggError.NewAggregate(errs)
 }
 
 func getInventoryFromPath(d DealerResponse, inventoryPath string, inventoryQuery url.Values) (InventoryResponse, error) {
@@ -179,6 +182,10 @@ func getInventoryFromPath(d DealerResponse, inventoryPath string, inventoryQuery
 	resp, err := client.Do(req)
 	if err != nil {
 		return out, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("could not retrieve cars for %s (%s): HTTP %d - %s", d.Name, u.String(), resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 
 	defer resp.Body.Close()
